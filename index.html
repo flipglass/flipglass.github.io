@@ -68,16 +68,11 @@
     }
     body.finished #state-label { opacity: 1; }
 
-    /* ---- "finished" visual indicator: obvious + flashing ---- */
-    body.finished {
-      --bg: #7a0000;
-      animation: flash 1s steps(1) infinite;
-    }
-    body.finished #time { color: #fff; }
-    @keyframes flash {
-      0%, 49%  { background: #7a0000; }
-      50%, 100%{ background: #ff2b2b; }
-    }
+    /* ---- "finished" state: obvious but calm. Just invert the colors,
+       no flashing, no red. --bg / --fg are swapped in JS so this works even
+       when custom colors are set via the URL. ---- */
+    body.finished { transition: background-color .25s ease, color .25s ease; }
+    body, #time, #message, #state-label { transition: background-color .25s ease, color .25s ease; }
 
     /* ---- status pill (keep-awake / focus indicator) ---- */
     #status {
@@ -124,11 +119,10 @@
       gap: 2vh;
       padding: 6vmin;
       text-align: center;
-      background: rgba(0,0,0,0.92);
+      background: #000;
       cursor: pointer;
     }
     body.focusslosh #focus-overlay { display: flex; }
-    body.focusslosh { animation: flash 0.7s steps(1) infinite; }
 
     #focus-overlay .big {
       font-size: 12vh;
@@ -286,6 +280,30 @@
       return (neg ? "-" : "") + out;
     }
 
+    // ---------- colors from URL (applied before the first tick) ----------
+    if (/^[0-9a-fA-F]{6}$/.test(cfg.bg || "")) {
+      document.documentElement.style.setProperty("--bg", "#" + cfg.bg);
+    }
+    if (/^[0-9a-fA-F]{6}$/.test(cfg.fg || "")) {
+      document.documentElement.style.setProperty("--fg", "#" + cfg.fg);
+    }
+
+    // Capture the resolved colors so we can invert on finish
+    // (this works even when custom bg/fg come from the URL).
+    function currentColors() {
+      const cs = getComputedStyle(document.documentElement);
+      return {
+        bg: cs.getPropertyValue("--bg").trim() || "#000000",
+        fg: cs.getPropertyValue("--fg").trim() || "#ffffff",
+      };
+    }
+    const origColors = currentColors();
+
+    function invertColors() {
+      document.documentElement.style.setProperty("--bg", origColors.fg);
+      document.documentElement.style.setProperty("--fg", origColors.bg);
+    }
+
     function render() {
       if (cfg.zero === "freeze") {
         const left = Math.max(0, targetMs - Date.now());
@@ -300,18 +318,11 @@
         finished = true;
         document.body.classList.add("finished");
         labelEl.textContent = cfg.endmsg || "Time's up!";
+        invertColors();
       }
     }
     render();
     setInterval(render, 250);
-
-    // ---------- colors from URL ----------
-    if (/^[0-9a-fA-F]{6}$/.test(cfg.bg || "")) {
-      document.documentElement.style.setProperty("--bg", "#" + cfg.bg);
-    }
-    if (/^[0-9a-fA-F]{6}$/.test(cfg.fg || "")) {
-      document.documentElement.style.setProperty("--fg", "#" + cfg.fg);
-    }
 
     // ---------- keep the screen awake (Wake Lock API) ----------
     let wakeLock = null;
