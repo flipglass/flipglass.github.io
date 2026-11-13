@@ -178,10 +178,10 @@
     "use strict";
 
     // ---------- parse the URL ----------
-    // Format (compatible with bigwords.page):
-    //   #<message>&timer=30m            e.g. https://site/#&timer=30m
-    //   #Break ends in&timer=15m
-    // Params:
+    // Params are read from BOTH the query string (?timer=30m) and the fragment
+    // (#&timer=30m), so either form works. On conflict, the fragment wins
+    // (that's the bigwords.page convention). The message is the leading text in
+    // the fragment, before the first '&'.
     //   timer   length, d/h/m/s amounts ("30m", "1h30m", "900") or seconds ("14400")
     //   until   ISO 8601 date/time target
     //   bg      6-digit hex background (no #)
@@ -190,22 +190,27 @@
     //   endmsg  text shown when the timer finishes (default: "Time's up!")
     //   zero    "freeze" (stop at 0, no negatives) — otherwise counts negative
     function parseURL() {
-      const raw = location.hash.replace(/^#/, "");
-      // message = leading text before the first unescaped '&' (if it has no '=')
-      const amp = raw.indexOf("&");
+      const rawHash = location.hash.replace(/^#/, "");
+      const rawSearch = location.search.replace(/^\?/, "");
+
+      // Message = leading text in the fragment before the first unescaped '&'
+      // (only when that leading piece has no '=' of its own).
+      const amp = rawHash.indexOf("&");
       let message = "";
-      let query = raw;
+      let hashQuery = rawHash;
       if (amp === -1) {
-        // whole thing may be a message or a single "key=val"
-        if (raw.indexOf("=") === -1) message = raw;
-        else query = raw; // treat as params
+        if (rawHash.indexOf("=") === -1) message = rawHash; // whole fragment is the message
       } else {
-        const head = raw.slice(0, amp);
+        const head = rawHash.slice(0, amp);
         if (head.indexOf("=") === -1) message = head;
-        query = raw.slice(amp + 1);
+        hashQuery = rawHash.slice(amp + 1);
       }
+
+      // Merge params: start with the query string, then let the fragment override.
       let p;
-      try { p = new URLSearchParams(query); } catch { p = new URLSearchParams(); }
+      try { p = new URLSearchParams(rawSearch); } catch { p = new URLSearchParams(); }
+      try { for (const [k, v] of new URLSearchParams(hashQuery)) p.set(k, v); } catch {}
+
       const m = p.get("msg");
       if (m) message = m;
       return {
