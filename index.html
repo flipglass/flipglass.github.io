@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="theme-color" content="#000000" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <title>Countdown — big words</title>
+  <style>
+    :root {
+      --bg: #000000;
+      --fg: #ffffff;
+      --ok: #35d07f;
+      --warn: #ffb020;
+      --bad: #ff3b3b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    /* ---- main display ---- */
+    #display {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1vh;
+      padding: 4vmin;
+      text-align: center;
+    }
+
+    #message {
+      font-size: 6vh;
+      line-height: 1.1;
+      font-weight: 600;
+      opacity: 0.85;
+      max-width: 96vw;
+    }
+    #message:empty { display: none; }
+
+    #time {
+      font-variant-numeric: tabular-nums;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 0.9;
+      /* big by default; JS fine-tunes so it fills the screen */
+      font-size: 40vh;
+    }
+
+    #state-label {
+      font-size: 5vh;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 700;
+      opacity: 0;
+      transition: opacity .2s ease;
+    }
+    body.finished #state-label { opacity: 1; }
+
+    /* ---- "finished" visual indicator: obvious + flashing ---- */
+    body.finished {
+      --bg: #7a0000;
+      animation: flash 1s steps(1) infinite;
+    }
+    body.finished #time { color: #fff; }
+    @keyframes flash {
+      0%, 49%  { background: #7a0000; }
+      50%, 100%{ background: #ff2b2b; }
+    }
+
+    /* ---- status pill (keep-awake / focus indicator) ---- */
+    #status {
+      position: fixed;
+      top: 2vmin;
+      right: 2vmin;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 0.6em;
+      padding: 0.6em 1em;
+      border-radius: 999px;
+      font-size: clamp(12px, 2.4vh, 22px);
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      background: rgba(0,0,0,0.55);
+      color: var(--fg);
+      border: 2px solid var(--ok);
+      backdrop-filter: blur(4px);
+      transition: border-color .2s ease, color .2s ease;
+    }
+    #status .dot {
+      width: 0.8em;
+      height: 0.8em;
+      border-radius: 50%;
+      background: var(--ok);
+      box-shadow: 0 0 0.4em var(--ok);
+    }
+    #status.warn { border-color: var(--warn); }
+    #status.warn .dot { background: var(--warn); box-shadow: 0 0 0.4em var(--warn); }
+    #status.bad  { border-color: var(--bad); color: #fff; animation: pulse 0.8s ease-in-out infinite; }
+    #status.bad .dot { background: var(--bad); box-shadow: 0 0 0.4em var(--bad); }
+    @keyframes pulse { 0%,100%{ opacity: 1; } 50%{ opacity: 0.35; } }
+
+    /* ---- full-screen "focus lost" overlay (the obvious alarm) ---- */
+    #focus-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2vh;
+      padding: 6vmin;
+      text-align: center;
+      background: rgba(0,0,0,0.92);
+      cursor: pointer;
+    }
+    body.focusslosh #focus-overlay { display: flex; }
+    body.focusslosh { animation: flash 0.7s steps(1) infinite; }
+
+    #focus-overlay .big {
+      font-size: 12vh;
+      font-weight: 900;
+      color: var(--bad);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      animation: pulse 0.7s ease-in-out infinite;
+    }
+    #focus-overlay .sub {
+      font-size: 4.5vh;
+      max-width: 90vw;
+      line-height: 1.25;
+      color: #ffd0d0;
+    }
+
+    /* ---- hint that fades out ---- */
+    #hint {
+      position: fixed;
+      left: 50%;
+      bottom: 2vmin;
+      transform: translateX(-50%);
+      z-index: 5;
+      font-size: clamp(11px, 1.8vh, 16px);
+      opacity: 0.5;
+      text-align: center;
+      transition: opacity .5s ease;
+      pointer-events: none;
+    }
+    #hint.fade { opacity: 0; }
+  </style>
+</head>
+<body>
+  <div id="status" role="status" aria-live="polite">
+    <span class="dot" aria-hidden="true"></span>
+    <span id="status-text">On screen</span>
+  </div>
+
+  <div id="display">
+    <div id="message"></div>
+    <div id="time">--:--</div>
+    <div id="state-label"></div>
+  </div>
+
+  <div id="focus-overlay" tabindex="-1">
+    <div class="big">Focus lost</div>
+    <div class="sub">This tab is no longer focused — the keep-awake lock was released by the browser and the screen may sleep.<br><br>Click here or press any key to take back focus and resume.</div>
+  </div>
+
+  <div id="hint">click / tap for fullscreen &middot; <kbd>F</kbd> fullscreen &middot; <kbd>Esc</kbd> exit</div>
+
+  <script>
+    "use strict";
+
+    // ---------- parse the URL ----------
+    // Format (compatible with bigwords.page):
+    //   #<message>&timer=30m            e.g. https://site/#&timer=30m
+    //   #Break ends in&timer=15m
+    // Params:
+    //   timer   length, d/h/m/s amounts ("30m", "1h30m", "900") or seconds ("14400")
+    //   until   ISO 8601 date/time target
+    //   bg      6-digit hex background (no #)
+    //   fg      6-digit hex foreground (no #)
+    //   msg     message text (alternative to leading text in the fragment)
+    //   endmsg  text shown when the timer finishes (default: "Time's up!")
+    //   zero    "freeze" (stop at 0, no negatives) — otherwise counts negative
+    function parseURL() {
+      const raw = location.hash.replace(/^#/, "");
+      // message = leading text before the first unescaped '&' (if it has no '=')
+      const amp = raw.indexOf("&");
+      let message = "";
+      let query = raw;
+      if (amp === -1) {
+        // whole thing may be a message or a single "key=val"
+        if (raw.indexOf("=") === -1) message = raw;
+        else query = raw; // treat as params
+      } else {
+        const head = raw.slice(0, amp);
+        if (head.indexOf("=") === -1) message = head;
+        query = raw.slice(amp + 1);
+      }
+      let p;
+      try { p = new URLSearchParams(query); } catch { p = new URLSearchParams(); }
+      const m = p.get("msg");
+      if (m) message = m;
+      return {
+        message: safeDecode(message || ""),
+        timer: p.get("timer") || null,
+        until: p.get("until") || null,
+        bg: p.get("bg"),
+        fg: p.get("fg"),
+        endmsg: p.get("endmsg"),
+        zero: p.get("zero") || null,
+      };
+    }
+
+    function safeDecode(s) {
+      try { return decodeURIComponent(s); } catch { return s; }
+    }
+
+    // "30m", "1h30m", "90m", "14400" (seconds)
+    function parseDuration(str) {
+      if (!str) return null;
+      str = String(str).trim().toLowerCase();
+      if (/^\d+$/.test(str)) return parseInt(str, 10) * 1000; // seconds
+      const m = str.match(/^(\d+)\s*d|(\d+)\s*h|(\d+)\s*m|(\d+)\s*s/g);
+      if (!m) return null;
+      let ms = 0;
+      for (const tok of m) {
+        const dm = tok.match(/^(\d+)\s*d$/);
+        const hm = tok.match(/^(\d+)\s*h$/);
+        const mm = tok.match(/^(\d+)\s*m$/);
+        const sm = tok.match(/^(\d+)\s*s$/);
+        if (dm) ms += parseInt(dm[1], 10) * 86400000;
+        else if (hm) ms += parseInt(hm[1], 10) * 3600000;
+        else if (mm) ms += parseInt(mm[1], 10) * 60000;
+        else if (sm) ms += parseInt(sm[1], 10) * 1000;
+      }
+      return ms;
+    }
+
+    // ---------- timer ----------
+    const cfg = parseURL();
+    let targetMs = null;      // absolute timestamp when timer hits 0
+    let totalMs = 0;          // full duration, for progress
+    let finished = false;
+
+    if (cfg.until) {
+      const t = new Date(cfg.until).getTime();
+      if (!isNaN(t)) { targetMs = t; totalMs = 0; }
+    }
+    const durMs = parseDuration(cfg.timer);
+    if (durMs != null) { targetMs = Date.now() + durMs; totalMs = durMs; }
+    if (targetMs == null) targetMs = Date.now() + 30 * 60000; // default 30m
+
+    const timeEl = document.getElementById("time");
+    const labelEl = document.getElementById("state-label");
+    const msgEl = document.getElementById("message");
+    msgEl.textContent = cfg.message || "";
+
+    function pad(n) { return String(n).padStart(2, "0"); }
+
+    function fmt(totalSec) {
+      const neg = totalSec < 0;
+      let s = Math.abs(Math.round(totalSec));
+      const d = Math.floor(s / 86400); s -= d * 86400;
+      const h = Math.floor(s / 3600);  s -= h * 3600;
+      const m = Math.floor(s / 60);    s -= m * 60;
+      const sec = s;
+      let out;
+      if (d > 0) out = `${d}d ${pad(h)}h ${pad(m)}m`;
+      else if (h > 0) out = `${h}h ${pad(m)}m ${pad(sec)}s`;
+      else if (m > 0) out = `${m}m ${pad(sec)}s`;
+      else out = `${sec}s`;
+      return (neg ? "-" : "") + out;
+    }
+
+    function render() {
+      if (cfg.zero === "freeze") {
+        const left = Math.max(0, targetMs - Date.now());
+        timeEl.textContent = fmt(Math.round(left / 1000));
+        return;
+      }
+      const leftMs = targetMs - Date.now();
+      const leftSec = Math.round(leftMs / 1000);
+      timeEl.textContent = fmt(leftSec);
+
+      if (leftMs <= 0 && !finished) {
+        finished = true;
+        document.body.classList.add("finished");
+        labelEl.textContent = cfg.endmsg || "Time's up!";
+      }
+    }
+    render();
+    setInterval(render, 250);
+
+    // ---------- colors from URL ----------
+    if (/^[0-9a-fA-F]{6}$/.test(cfg.bg || "")) {
+      document.documentElement.style.setProperty("--bg", "#" + cfg.bg);
+    }
+    if (/^[0-9a-fA-F]{6}$/.test(cfg.fg || "")) {
+      document.documentElement.style.setProperty("--fg", "#" + cfg.fg);
+    }
+
+    // ---------- keep the screen awake (Wake Lock API) ----------
+    let wakeLock = null;
+    const statusEl = document.getElementById("status");
+    const statusText = document.getElementById("status-text");
+
+    function wakeSupported() { return "wakeLock" in navigator; }
+
+    async function acquire() {
+      if (!wakeSupported()) return;
+      if (wakeLock) return;
+      if (document.visibilityState !== "visible") return;
+      try {
+        wakeLock = await navigator.wakeLock.request("screen");
+        wakeLock.addEventListener("release", onWakeRelease);
+        refreshStatus();
+      } catch (e) {
+        // can't acquire while hidden / interrupted; refreshStatus will reflect it
+        refreshStatus();
+      }
+    }
+
+    async function release() {
+      if (wakeLock) {
+        try { await wakeLock.release(); } catch {}
+        wakeLock = null;
+      }
+      refreshStatus();
+    }
+
+    // Fired when the *system* drops the lock (e.g. tab lost focus / screen dimmed).
+    function onWakeRelease() {
+      wakeLock = null;
+      refreshStatus();
+    }
+
+    function isActive() {
+      return document.visibilityState === "visible" && document.hasFocus();
+    }
+
+    function refreshStatus() {
+      const focused = document.visibilityState === "visible" && document.hasFocus();
+      const held = !!wakeLock;
+      const overlay = document.body.classList.toggle("focusslosh", !focused);
+
+      statusEl.classList.remove("warn", "bad");
+      if (!focused) {
+        // Focus stolen: the obvious alarm is the full-screen overlay.
+        statusEl.classList.add("bad");
+        statusText.textContent = "Focus lost";
+        return;
+      }
+      if (wakeSupported()) {
+        if (held) { statusText.textContent = "On screen"; }
+        else {
+          statusEl.classList.add("warn");
+          statusText.textContent = "Acquiring…";
+        }
+      } else {
+        statusEl.classList.add("warn");
+        statusText.textContent = "Wake-lock unsupported";
+      }
+    }
+
+    function onVisibility() {
+      if (isActive()) acquire();
+      else release();
+    }
+    function onFocus() { acquire(); }
+    function onBlur() { release(); }
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+
+    // Resume focus / re-acquire on any user interaction while overlay is up.
+    function resumeFromOverlay() {
+      if (document.body.classList.contains("focusslosh")) {
+        // Focusing the window takes the focus back; wake lock follows.
+        acquire();
+        refreshStatus();
+      }
+    }
+    document.addEventListener("pointerdown", resumeFromOverlay, { passive: true });
+    document.addEventListener("keydown", resumeFromOverlay);
+
+    // Fullscreen helper (helps some TV/lock-screen cases).
+    function toggleFullscreen() {
+      const el = document.documentElement;
+      if (!document.fullscreenElement) {
+        (el.requestFullscreen || el.webkitRequestFullscreen || function(){}).call(el);
+      } else {
+        (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
+      }
+    }
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "f" || e.key === "F") { e.preventDefault(); toggleFullscreen(); }
+    });
+    document.addEventListener("fullscreenchange", () => { hideHint(); refreshStatus(); });
+
+    // ---------- init ----------
+    const hint = document.getElementById("hint");
+    let hintTimer = setTimeout(hideHint, 6000);
+    function hideHint() {
+      clearTimeout(hintTimer);
+      hint.classList.add("fade");
+    }
+
+    acquire();
+    refreshStatus();
+
+    // Keep everything in sync if focus flickers.
+    setInterval(refreshStatus, 1000);
+  </script>
+</body>
+</html>
